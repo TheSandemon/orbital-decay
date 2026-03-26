@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ORBITAL DECAY — Survive the Void</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Rajdhani:wght@300;500;700&display=swap" rel="stylesheet">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background: #0a0a0a;
+            overflow: hidden;
+            font-family: 'Rajdhani', sans-serif;
+            cursor: crosshair;
+        }
+        canvas { display: block; }
+        #ui {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            color: #D4A853;
+            z-index: 10;
+            pointer-events: none;
+        }
+        #ui h1 {
+            font-family: 'Orbitron', sans-serif;
+            font-size: 28px;
+            font-weight: 900;
+            letter-spacing: 4px;
+            text-shadow: 0 0 20px rgba(212,168,83,0.5);
+            margin-bottom: 8px;
+        }
+        #score-display {
+            font-size: 48px;
+            font-weight: 700;
+            color: #00ff88;
+            text-shadow: 0 0 30px rgba(0,255,136,0.6);
+        }
+        #mass-bar {
+            width: 200px;
+            height: 6px;
+            background: rgba(255,255,255,0.1);
+            border-radius: 3px;
+            margin-top: 10px;
+            overflow: hidden;
+        }
+        #mass-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #00ff88, #D4A853);
+            border-radius: 3px;
+            transition: width 0.3s ease;
+            box-shadow: 0 0 10px rgba(0,255,136,0.5);
+        }
+        #mass-label {
+            font-size: 12px;
+            letter-spacing: 2px;
+            opacity: 0.7;
+            margin-top: 4px;
+        }
+        #instructions {
+            position: fixed;
+            bottom: 20px;
+            left: 20px;
+            color: rgba(255,255,255,0.4);
+            font-size: 13px;
+            letter-spacing: 1px;
+            z-index: 10;
+            pointer-events: none;
+        }
+        #gameover {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            z-index: 20;
+            display: none;
+        }
+        #gameover h2 {
+            font-family: 'Orbitron', sans-serif;
+            font-size: 42px;
+            color: #ff3366;
+            text-shadow: 0 0 40px rgba(255,51,102,0.7);
+            letter-spacing: 6px;
+            margin-bottom: 20px;
+        }
+        #gameover p {
+            color: rgba(255,255,255,0.6);
+            font-size: 18px;
+            margin-bottom: 30px;
+        }
+        #gameover button {
+            background: transparent;
+            border: 2px solid #D4A853;
+            color: #D4A853;
+            font-family: 'Orbitron', sans-serif;
+            font-size: 14px;
+            letter-spacing: 3px;
+            padding: 14px 40px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        #gameover button:hover {
+            background: #D4A853;
+            color: #0a0a0a;
+            box-shadow: 0 0 30px rgba(212,168,83,0.5);
+        }
+        #multiplier {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            text-align: right;
+            color: #D4A853;
+            z-index: 10;
+            pointer-events: none;
+        }
+        #multiplier .label {
+            font-size: 11px;
+            letter-spacing: 2px;
+            opacity: 0.6;
+        }
+        #multiplier .value {
+            font-family: 'Orbitron', sans-serif;
+            font-size: 24px;
+            color: #00ff88;
+            text-shadow: 0 0 15px rgba(0,255,136,0.5);
+        }
+    </style>
+</head>
+<body>
+    <div id="ui">
+        <h1>ORBITAL DECAY</h1>
+        <div id="score-display">0</div>
+        <div id="mass-bar"><div id="mass-fill"></div></div>
+        <div id="mass-label">STELLAR MASS</div>
+    </div>
+    <div id="multiplier">
+        <div class="label">CHAIN</div>
+        <div class="value" id="chain-display">x1</div>
+    </div>
+    <div id="instructions">CLICK to absorb &bull; DRAG to shift gravity &bull; SURVIVE</div>
+    <div id="gameover">
+        <h2>DECAYED</h2>
+        <p id="final-score">Final Score: 0</p>
+        <button onclick="restartGame()">RESTART</button>
+    </div>
+    <canvas id="canvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        let W, H, centerX, centerY;
+
+        function resize() {
+            W = canvas.width = window.innerWidth;
+            H = canvas.height = window.innerHeight;
+            centerX = W / 2;
+            centerY = H / 2;
+        }
+        resize();
+        window.addEventListener('resize', resize);
+
+        // Game state
+        let score = 0;
+        let gameRunning = true;
+        let mass = 50;
+        let maxMass = 150;
+        let chain = 0;
+        let chainTimer = 0;
+        let star = { x: 0, y: 0, vx: 0, vy: 0, radius: 25, pulse: 0 };
+        let particles = [];
+        let debris = [];
+        let stars = [];
+        let mouse = { x: 0, y: 0, down: false, dragX: 0, dragY: 0 };
+
+        // Background stars
+        for (let i = 0; i < 200; i++) {
+            stars.push({
+                x: Math.random() * 2000 - 500,
+                y: Math.random() * 2000 - 500,
+                size: Math.random() * 1.5 + 0.5,
+                alpha: Math.random() * 0.5 + 0.2,
+                twinkle: Math.random() * Math.PI * 2
+            });
+        }
+
+        class Debris {
+            constructor() {
+                this.reset();
+            }
+            reset() {
+                const angle = Math.random() * Math.PI * 2;
+                const dist = Math.max(W, H) * 0.6 + Math.random() * 200;
+                this.x = centerX + Math.cos(angle) * dist;
+                this.y = centerY + Math.sin(angle) * dist;
+                this.vx = 0;
+                this.vy = 0;
+                this.size = Math.random() * 4 + 2;
+                this.type = Math.random() < 0.7 ? 'rock' : 'comet';
+                this.color = this.type === 'comet' ? '#00ff88' : (Math.random() < 0.5 ? '#D4A853' : '#888');
+                this.trail = [];
+                this.alive = true;
+                this.value = Math.floor(this.size * 10);
+                this.orbitAngle = Math.random() * Math.PI * 2;
+                this.orbitSpeed = (Math.random() * 0.02 + 0.005) * (Math.random() < 0.5 ? 1 : -1);
+                this.mass = this.size * 0.5;
+                this.stable = true;
+                this.unstableTimer = Math.random() * 300 + 200;
+            }
+            update() {
+                if (!this.stable) {
+                    this.unstableTimer--;
+                    if (this.unstableTimer <= 0) {
+                        this.explode();
+                        return;
+                    }
+                }
+                // Gravitational pull toward star
+                const dx = centerX - this.x;
+                const dy = centerY - this.y;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                const force = (mass * 0.001) / (dist * 0.01);
+                this.vx += (dx / dist) * force;
+                this.vy += (dy / dist) * force;
+                // Slight orbital drift
+                this.orbitAngle += this.orbitSpeed;
+                this.vx += Math.cos(this.orbitAngle) * 0.1;
+                this.vy += Math.sin(this.orbitAngle) * 0.1;
+                // Drag
+                this.vx *= 0.995;
+                this.vy *= 0.995;
+                this.x += this.vx;
+                this.y += this.vy;
+                // Trail
+                this.trail.unshift({ x: this.x, y: this.y, alpha: 1 });
+                if (this.trail.length > 20) this.trail.pop();
+                this.trail.forEach(t => t.alpha *= 0.92);
+                // Check collision with star
+                const starDist = Math.sqrt((this.x - centerX) ** 2 + (this.y - centerY) ** 2);
+                if (starDist < star.radius + this.size) {
+                    this.absorb();
+                }
+            }
+            absorb() {
+                if (mass + this.mass > maxMass) {
+                    this.explode();
+                    return;
+                }
+                mass += this.mass;
+                score += this.value * (1 + chain * 0.5);
+                chain++;
+                chainTimer = 120;
+                // Particles burst
+                for (let i = 0; i < 20; i++) {
+                    particles.push(new Particle(this.x, this.y, this.color));
+                }
+                this.alive = false;
+                setTimeout(() => this.reset(), 500);
+            }
+            explode() {
+                for (let i = 0; i < 30; i++) {
+                    particles.push(new Particle(this.x, this.y, '#ff3366', true));
+                }
+                if (gameRunning) {
+                    endGame();
+                }
+                this.alive = false;
+                setTimeout(() => this.reset(), 1000);
+            }
+            draw() {
+                // Trail
+                ctx.beginPath();
+                this.trail.forEach((t, i) => {
+                    ctx.strokeStyle = `rgba(${this.type === 'comet' ? '0,255,136' : '212,168,83'},${t.alpha * 0.3})`;
+                    ctx.lineWidth = this.size * 0.3;
+                    if (i === 0) ctx.moveTo(t.x, t.y);
+                    else ctx.lineTo(t.x, t.y);
+                });
+                ctx.stroke();
+                // Body
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+                const grad = ctx.createRadialGradient(this.x, this.y, 0, this.x, this.y, this.size);
+                if (this.stable) {
+                    grad.addColorStop(0, this.color);
+                    grad.addColorStop(1, 'transparent');
+                } else {
+                    grad.addColorStop(0, '#ff3366');
+                    grad.addColorStop(1, 'transparent');
+                }
+                ctx.fillStyle = grad;
+                ctx.fill();
+                // Glow
+                ctx.shadowColor = this.stable ? this.color : '#ff3366';
+                ctx.shadowBlur = 15;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.size * 0.5, 0, Math.PI * 2);
+                ctx.fillStyle = this.color;
+                ctx.fill();
+                ctx.shadowBlur = 0;
+            }
+        }
+
+        class Particle {
+            constructor(x, y, color, explosive = false) {
+                this.x = x;
+                this.y = y;
+                const angle = Math.random() * Math.PI * 2;
+                const speed = explosive ? Math.random() * 8 + 2 : Math.random() * 3 + 1;
+                this.vx = Math.cos(angle) * speed;
+                this.vy = Math.sin(angle) * speed;
+                this.color = color;
+                this.alpha = 1;
+                this.size = Math.random() * 3 + 1;
+                this.decay = explosive ? 0.03 : 0.02;
+            }
+            update() {
+                this.x += this.vx;
+                this.y += this.vy;
+                this.vx *= 0.98;
+                this.vy *= 0.98;
+                this.alpha -= this.decay;
+            }
+            draw() {
+                ctx.save();
+                ctx.globalAlpha = this.alpha;
+                ctx.fillStyle = this.color;
+                ctx.shadowColor = this.color;
+                ctx.shadowBlur = 10;
+                ctx.beginPath();
+                ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.restore();
+            }
+        }
+
+        // Create debris
+        for (let i = 0; i < 8; i++) {
+            debris.push(new Debris());
+        }
+
+        // Star pulse
+        function drawStar() {
+            star.pulse += 0.05;
+            const breathe = Math.sin(star.pulse) * 3;
+            const r = star.radius + breathe;
+            // Outer glow
+            const glow = ctx.createRadialGradient(centerX, centerY, r * 0.5, centerX, centerY, r * 4);
+            glow.addColorStop(0, 'rgba(212,168,83,0.3)');
+            glow.addColorStop(0.5, 'rgba(0,255,136,0.1)');
+            glow.addColorStop(1, 'transparent');
+            ctx.fillStyle = glow;
+            ctx.beginPath();
+            ctx.arc(centerX, centerY, r * 4, 0, Math.PI * 2);
+            ctx.fill();
+            // Core
+            const core = ctx.createRadialGradient(centerX, centerY, 0, centerX, centerY, r);
+            core.addColorStop(0, '#ffffff');
+            core.addColorStop(0.3, '#D4A853');
+            core.addColorStop(0.7, '#ff8800');
+            core.addColorStop(1, '#ff4400');
+            ctx.fillStyle = core;
+            ctx.shadowColor = '#D4A853';
+            ctx.shadowBlur = 40;
+            ctx.beginPath();
+            ctx.arc(centerX, centerY, r, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.shadowBlur = 0;
+            // Mass indicator ring
+            const massRatio = mass / maxMass;
+            ctx.strokeStyle = `rgba(${massRatio > 0.8 ? '255,51,102' : '0,255,136'},0.5)`;
+            ctx.lineWidth = 2;
+            ctx.setLineDash([5, 5]);
+            ctx.beginPath();
+            ctx.arc(centerX, centerY, r + 15 + massRatio * 20, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.setLineDash([]);
+        }
+
+        function drawBackground() {
+            // Deep space gradient
+            const bg = ctx.createRadialGradient(centerX, centerY, 0, centerX, centerY, Math.max(W, H) * 0.7);
+            bg.addColorStop(0, '#0f0f15');
+            bg.addColorStop(1, '#050508');
+            ctx.fillStyle = bg;
+            ctx.fillRect(0, 0, W, H);
+            // Stars
+            stars.forEach(s => {
+                s.twinkle += 0.02;
+                const alpha = s.alpha * (0.7 + Math.sin(s.twinkle) * 0.3);
+                ctx.fillStyle = `rgba(255,255,255,${alpha})`;
+                ctx.beginPath();
+                ctx.arc(s.x % W, s.y % H, s.size, 0, Math.PI * 2);
+                ctx.fill();
+            });
+            // Gravity field hint
+            if (mouse.down) {
+                const dx = mouse.x - centerX;
+                const dy = mouse.y - centerY;
+                ctx.strokeStyle = 'rgba(0,255,136,0.1)';
+                ctx.lineWidth = 1;
+                for (let i = 0; i < 5; i++) {
+                    ctx.beginPath();
+                    ctx.arc(centerX, centerY, 100 + i * 60, 0, Math.PI * 2);
+                    ctx.stroke();
+                }
+            }
+        }
+
+        function updateUI() {
+            document.getElementById('score-display').textContent = Math.floor(score);
+            document.getElementById('mass-fill').style.width = `${(mass / maxMass) * 100}%`;
+            document.getElementById('chain-display').textContent = `x${1 + chain * 0.5}`;
+            if (mass / maxMass > 0.8) {
+                document.getElementById('mass-fill').style.background = 'linear-gradient(90deg, #ff3366, #ff6644)';
+            } else {
+                document.getElementById('mass-fill').style.background = 'linear-gradient(90deg, #00ff88, #D4A853)';
+            }
+        }
+
+        function endGame() {
+            gameRunning = false;
+            document.getElementById('gameover').style.display = 'block';
+            document.getElementById('final-score').textContent = `Final Score: ${Math.floor(score)}`;
+        }
+
+        window.restartGame = function() {
+            score = 0;
+            mass = 50;
+            chain = 0;
+            gameRunning = true;
+            debris.forEach(d => d.reset());
+            particles.length = 0;
+            document.getElementById('gameover').style.display = 'none';
+        };
+
+        // Input
+        canvas.addEventListener('mousedown', e => {
+            mouse.down = true;
+            mouse.x = e.clientX;
+            mouse.y = e.clientY;
+        });
+        canvas.addEventListener('mousemove', e => {
+            mouse.x = e.clientX;
+            mouse.y = e.clientY;
+            if (mouse.down) {
+                // Shift star position slightly
+                centerX += (e.clientX - centerX) * 0.02;
+                centerY += (e.clientY - centerY) * 0.02;
+            }
+        });
+        canvas.addEventListener('mouseup', () => mouse.down = false);
+        canvas.addEventListener('mouseleave', () => mouse.down = false);
+
+        // Touch
+        canvas.addEventListener('touchstart', e => {
+            e.preventDefault();
+            mouse.down = true;
+            mouse.x = e.touches[0].clientX;
+            mouse.y = e.touches[0].clientY;
+        });
+        canvas.addEventListener('touchmove', e => {
+            e.preventDefault();
+            mouse.x = e.touches[0].clientX;
+            mouse.y = e.touches[0].clientY;
+            centerX += (mouse.x - centerX) * 0.02;
+            centerY += (mouse.y - centerY) * 0.02;
+        });
+        canvas.addEventListener('touchend', () => mouse.down = false);
+
+        // Gradually stabilize debris
+        setInterval(() => {
+            debris.forEach(d => {
+                if (d.stable && d.trail.length > 5) {
+                    // Random chance to destabilize
+                    if (Math.random() < 0.01 && mass < maxMass * 0.7) {
+                        d.stable = false;
+                        d.unstableTimer = 200 + Math.random() * 100;
+                    }
+                }
+            });
+        }, 1000);
+
+        // Slowly lose mass over time
+        setInterval(() => {
+            if (gameRunning && mass > 30) {
+                mass -= 0.1;
+            }
+        }, 100);
+
+        function loop() {
+            ctx.clearRect(0, 0, W, H);
+            drawBackground();
+            if (gameRunning) {
+                // Update chain timer
+                if (chainTimer > 0) chainTimer--;
+                else chain = 0;
+                // Update debris
+                debris.forEach(d => d.update());
+            }
+            // Update particles
+            particles = particles.filter(p => p.alpha > 0);
+            particles.forEach(p => p.update());
+            // Draw
+            debris.forEach(d => d.draw());
+            particles.forEach(p => p.draw());
+            drawStar();
+            updateUI();
+            requestAnimationFrame(loop);
+        }
+        loop();
+    </script>
+</body>
+</html>
