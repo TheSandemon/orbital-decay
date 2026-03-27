@@ -180,6 +180,64 @@
             z-index: 10;
             pointer-events: none;
         }
+        #gravity-field {
+            position: fixed;
+            top: 130px;
+            left: 20px;
+            color: rgba(0,255,136,0.4);
+            font-size: 11px;
+            letter-spacing: 1px;
+            z-index: 10;
+            pointer-events: none;
+        }
+        #wave-clear {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-family: 'Orbitron', sans-serif;
+            font-size: 32px;
+            letter-spacing: 6px;
+            color: #D4A853;
+            text-shadow: 0 0 40px rgba(212,168,83,0.9);
+            z-index: 16;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+        }
+        #wave-clear.show {
+            opacity: 1;
+        }
+        #close-call {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-family: 'Orbitron', sans-serif;
+            font-size: 20px;
+            letter-spacing: 4px;
+            color: #00ff88;
+            text-shadow: 0 0 30px rgba(0,255,136,0.9);
+            z-index: 16;
+            pointer-events: none;
+            opacity: 0;
+        }
+        #danger-zone {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            border: 3px solid transparent;
+            pointer-events: none;
+            z-index: 5;
+            transition: border-color 0.5s ease;
+        }
+        #danger-zone.critical {
+            border-color: rgba(255,51,102,0.4);
+            animation: dangerPulse 0.8s infinite alternate;
+        }
+        @keyframes dangerPulse {
+            from { border-color: rgba(255,51,102,0.1); }
+            to { border-color: rgba(255,51,102,0.5); }
+        }
         #powerups {
             position: fixed;
             top: 140px;
@@ -306,7 +364,11 @@
     <div id="comet-warning">⚠ COMET STORM INCOMING ⚠</div>
     <div id="comet-indicator">COMET STORM ACTIVE</div>
     <div id="flare-indicator">STELLAR FLARE x<span id="flare-mult">1</span></div>
-    <div id="instructions">CLICK to absorb &bull; DRAG to shift gravity &bull; SPACE for supernova &bull; SURVIVE</div>
+    <div id="gravity-field">GRAVITY FIELD ACTIVE</div>
+    <div id="wave-clear">WAVE <span id="wave-clear-num">1</span> CLEAR +<span id="wave-bonus">500</span></div>
+    <div id="close-call">CLOSE CALL! x1.5</div>
+    <div id="danger-zone"></div>
+    <div id="instructions">CLICK to absorb &bull; DRAG to shift gravity &bull; SPACE for supernova &bull; Q=shield S=slowmo &bull; SURVIVE</div>
     <div id="gameover">
         <h2>DECAYED</h2>
         <p id="final-score">Final Score: 0</p>
@@ -387,6 +449,13 @@
         let supernovaCharge = 100;
         let supernovaCooldown = 0;
         let star = { x: 0, y: 0, vx: 0, vy: 0, radius: 25, pulse: 0, flareIntensity: 0 };
+        let starVelX = 0, starVelY = 0;
+        let gravityFieldActive = true;
+        let gravityFieldPulse = 0;
+        let closeCallActive = false;
+        let closeCallTimer = 0;
+        let waveClearBonus = 0;
+        let waveClearTimer = 0;
         let particles = [];
         let debris = [];
         let blackHoles = [];
@@ -654,6 +723,33 @@
             setTimeout(() => { flareMultiplier = Math.max(1, flareMultiplier - 0.5); }, 3000);
         }
 
+        function triggerCloseCall() {
+            if (closeCallActive) return;
+            closeCallActive = true;
+            closeCallTimer = 90;
+            score += 50 * flareMultiplier;
+            const el = document.getElementById('close-call');
+            el.style.opacity = 1;
+            el.style.transition = 'opacity 0.3s ease';
+            playTone(660, 0.2, 'sine', 0.1);
+            playTone(880, 0.15, 'sine', 0.08);
+        }
+
+        function showWaveClear(waveNum) {
+            waveClearBonus = 500 + waveNum * 200;
+            score += waveClearBonus;
+            const el = document.getElementById('wave-clear');
+            document.getElementById('wave-clear-num').textContent = waveNum;
+            document.getElementById('wave-bonus').textContent = waveClearBonus;
+            el.classList.add('show');
+            flashAlpha = 0.25;
+            playTone(880, 0.3, 'sine', 0.12);
+            setTimeout(() => playTone(1100, 0.25, 'sine', 0.1), 100);
+            setTimeout(() => {
+                el.classList.remove('show');
+            }, 2500);
+        }
+
         function triggerCometStorm() {
             if (cometStormActive) return;
             cometStormActive = true;
@@ -896,8 +992,10 @@
                 const dy = centerY - this.y;
                 const dist = Math.sqrt(dx * dx + dy * dy);
                 const force = (mass * 0.001) / (dist * 0.01);
-                this.vx += ((dx / dist) * force + waveOffsetX) * ts;
-                this.vy += ((dy / dist) * force + waveOffsetY) * ts;
+                // Apply star momentum to debris (comet-launch effect)
+                const momentumInfluence = Math.min(0.15, Math.sqrt(starVelX * starVelX + starVelY * starVelY) * 0.03);
+                this.vx += ((dx / dist) * force + waveOffsetX + starVelX * momentumInfluence) * ts;
+                this.vy += ((dy / dist) * force + waveOffsetY + starVelY * momentumInfluence) * ts;
                 this.orbitAngle += this.orbitSpeed * (1 + wave * 0.1) * ts;
                 this.vx += Math.cos(this.orbitAngle) * 0.1 * ts;
                 this.vy += Math.sin(this.orbitAngle) * 0.1 * ts;
@@ -1158,6 +1256,21 @@
             timeScale = slowmoActive ? 0.3 : 1;
             // Decay flare intensity
             star.flareIntensity *= 0.95;
+            // Close-call timer decay
+            if (closeCallTimer > 0) {
+                closeCallTimer--;
+                if (closeCallTimer <= 0) {
+                    closeCallActive = false;
+                    const el = document.getElementById('close-call');
+                    el.style.opacity = 0;
+                    debris.forEach(d => d.justMissed = false);
+                }
+            }
+            // Star momentum decay when not dragging
+            if (!mouse.down) {
+                starVelX *= 0.94;
+                starVelY *= 0.94;
+            }
         }, 50);
 
         function isShielded() {
@@ -1177,6 +1290,7 @@
         function checkWaveAdvance() {
             waveTimer++;
             if (waveTimer > 1800) {
+                const prevWave = wave;
                 wave++;
                 waveTimer = 0;
                 waveDebrisTarget = Math.min(16, 8 + wave);
@@ -1184,6 +1298,7 @@
                     debris.push(new Debris());
                 }
                 showAnnouncement(`WAVE ${wave}`);
+                showWaveClear(prevWave);
             }
         }
 
@@ -1309,17 +1424,51 @@
                 ctx.arc(s.x % W, s.y % H, s.size, 0, Math.PI * 2);
                 ctx.fill();
             });
-            // Gravity field hint
-            if (mouse.down) {
-                const dx = mouse.x - centerX;
-                const dy = mouse.y - centerY;
-                ctx.strokeStyle = 'rgba(0,255,136,0.1)';
+            // Gravity field visualization
+            gravityFieldPulse += 0.03;
+            const gfAlpha = 0.12 + Math.sin(gravityFieldPulse) * 0.04;
+            const fieldRadius = star.radius * (3 + mass / maxMass * 2);
+            for (let i = 0; i < 4; i++) {
+                const r = star.radius * (1.8 + i * 0.7 + mass / maxMass);
+                const alpha = gfAlpha * (1 - i * 0.2);
+                ctx.beginPath();
+                ctx.arc(centerX, centerY, r, 0, Math.PI * 2);
+                ctx.strokeStyle = `rgba(0,255,136,${alpha})`;
                 ctx.lineWidth = 1;
-                for (let i = 0; i < 5; i++) {
-                    ctx.beginPath();
-                    ctx.arc(centerX, centerY, 100 + i * 60, 0, Math.PI * 2);
-                    ctx.stroke();
-                }
+                ctx.setLineDash([4, 8]);
+                ctx.stroke();
+                ctx.setLineDash([]);
+            }
+            // Gravity field radial gradient
+            const fieldGrad = ctx.createRadialGradient(centerX, centerY, star.radius, centerX, centerY, fieldRadius);
+            fieldGrad.addColorStop(0, `rgba(0,255,136,${gfAlpha * 0.6})`);
+            fieldGrad.addColorStop(1, 'transparent');
+            ctx.fillStyle = fieldGrad;
+            ctx.beginPath();
+            ctx.arc(centerX, centerY, fieldRadius, 0, Math.PI * 2);
+            ctx.fill();
+            // Star velocity trail
+            if (Math.abs(starVelX) > 0.3 || Math.abs(starVelY) > 0.3) {
+                const trailLen = Math.min(8, Math.sqrt(starVelX * starVelX + starVelY * starVelY) * 3);
+                const velAngle = Math.atan2(starVelY, starVelX);
+                ctx.save();
+                ctx.strokeStyle = `rgba(212,168,83,0.3)`;
+                ctx.lineWidth = star.radius * 0.8;
+                ctx.lineCap = 'round';
+                ctx.setLineDash([3, 6]);
+                ctx.beginPath();
+                ctx.moveTo(centerX, centerY);
+                ctx.lineTo(centerX - Math.cos(velAngle) * trailLen * 8, centerY - Math.sin(velAngle) * trailLen * 8);
+                ctx.stroke();
+                ctx.setLineDash([]);
+                ctx.restore();
+            }
+            // Danger zone
+            const dangerEl = document.getElementById('danger-zone');
+            if (mass / maxMass > 0.85) {
+                dangerEl.classList.add('critical');
+            } else {
+                dangerEl.classList.remove('critical');
             }
         }
 
@@ -1329,6 +1478,7 @@
             document.getElementById('chain-display').textContent = `x${(1 + chain * 0.5).toFixed(1)}`;
             document.getElementById('wave-num').textContent = wave;
             document.getElementById('flare-mult').textContent = flareMultiplier.toFixed(1);
+            document.getElementById('gravity-field').style.display = gravityFieldActive ? 'block' : 'none';
             if (mass / maxMass > 0.8) {
                 document.getElementById('mass-fill').style.background = 'linear-gradient(90deg, #ff3366, #ff6644)';
             } else {
@@ -1387,11 +1537,15 @@
             slowmoTimer = 0;
             flareMultiplier = 1;
             absorptionStreak = 0;
+            starVelX = 0;
+            starVelY = 0;
+            closeCallActive = false;
+            closeCallTimer = 0;
             cometStormActive = false;
             cometStormTimer = 0;
             cometCycleTimer = 0;
             star.flareIntensity = 0;
-            debris.forEach(d => d.reset());
+            debris.forEach(d => { d.reset(); d.justMissed = false; });
             blackHoles.forEach(bh => bh.reset());
             powerups.forEach(p => p.reset());
             comets.forEach(c => c.reset());
@@ -1413,8 +1567,17 @@
             mouse.x = e.clientX;
             mouse.y = e.clientY;
             if (mouse.down) {
+                const prevX = centerX;
+                const prevY = centerY;
                 centerX += (e.clientX - centerX) * 0.02;
                 centerY += (e.clientY - centerY) * 0.02;
+                // Track star momentum for comet-launch effect
+                starVelX = (centerX - prevX) * 0.5;
+                starVelY = (centerY - prevY) * 0.5;
+            } else {
+                // Gradual momentum decay
+                starVelX *= 0.92;
+                starVelY *= 0.92;
             }
         });
         canvas.addEventListener('mouseup', () => mouse.down = false);
@@ -1437,10 +1600,27 @@
         canvas.addEventListener('touchend', () => mouse.down = false);
 
         window.addEventListener('keydown', e => {
+            initAudio();
             if (e.code === 'Space') {
                 e.preventDefault();
-                initAudio();
                 triggerSupernova();
+            }
+            if (e.code === 'KeyQ') {
+                e.preventDefault();
+                if (!shieldActive && shieldTimer <= 0) {
+                    shieldActive = true;
+                    shieldTimer = 600;
+                    showAnnouncement('SHIELD ACTIVE');
+                    flashAlpha = 0.1;
+                }
+            }
+            if (e.code === 'KeyS' && !e.ctrlKey) {
+                e.preventDefault();
+                if (!slowmoActive && slowmoTimer <= 0) {
+                    slowmoActive = true;
+                    slowmoTimer = 300;
+                    showAnnouncement('SLOW-MO');
+                }
             }
         });
 
@@ -1492,6 +1672,16 @@
                 const ts = slowmoActive ? 0.3 : 1;
                 debris.forEach(d => {
                     d.update(ts);
+                });
+                // Close-call detection: debris just barely missed the star
+                debris.forEach(d => {
+                    if (d.alive && !d.justMissed) {
+                        const dist = Math.sqrt((d.x - centerX) ** 2 + (d.y - centerY) ** 2);
+                        if (dist < star.radius * 2.5 && dist > star.radius + d.size) {
+                            d.justMissed = true;
+                            triggerCloseCall();
+                        }
+                    }
                 });
             }
             blackHoles = blackHoles.filter(bh => bh.alive);
