@@ -1000,6 +1000,8 @@
                 this.angle += this.orbitSpeed * ts;
                 this.pulse += 0.05 * ts;
                 this.damageFlash = Math.max(0, this.damageFlash - 0.05 * ts);
+                // Reset eclipse state each frame
+                this.eclipseActive = false;
                 // Clear eclipse flags on all debris first
                 debris.forEach(d => { if (d.alive) d.eclipsed = false; });
                 // Check eclipse: is moon between star and debris? Only eclipse debris close to the star
@@ -1016,20 +1018,6 @@
                         d.eclipsed = true;
                     }
                 });
-                if (!this.eclipseActive) {
-                    // Check if any debris is still eclipsed by this moon
-                    debris.forEach(d => {
-                        if (!d.alive || !d.eclipsed) return;
-                        const dx = d.x - centerX;
-                        const dy = d.y - centerY;
-                        const debrisAngle = Math.atan2(dy, dx);
-                        const angleDiff = Math.abs(this.normalizeAngle(debrisAngle - this.angle));
-                        const dist = Math.sqrt(dx * dx + dy * dy);
-                        if (angleDiff >= 0.25 || dist >= 300 || dist <= this.orbitRadius * 0.5) {
-                            d.eclipsed = false;
-                        }
-                    });
-                }
                 // Gravity: moons pull nearby debris tangentially (slingshot)
                 debris.forEach(d => {
                     if (!d.alive) return;
@@ -1896,9 +1884,9 @@
             if (gameRunning && mass > 30) {
                 mass -= 0.1;
             }
-            // Eclipse mass drain — void moons slowly drain mass when actively eclipsing debris
+            // Eclipse mass drain — void moons drain mass when actively blocking debris
             if (gameRunning && voidMoons.some(vm => vm.eclipseActive)) {
-                mass = Math.max(10, mass - 0.03);
+                mass = Math.max(10, mass - 0.02);
             }
         }, 100);
 
