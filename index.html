@@ -326,6 +326,36 @@
             z-index: 10;
             pointer-events: none;
         }
+        #eclipse-indicator {
+            position: fixed;
+            top: 215px;
+            left: 20px;
+            color: rgba(170,100,255,0.6);
+            font-size: 11px;
+            letter-spacing: 2px;
+            z-index: 10;
+            pointer-events: none;
+            display: none;
+            animation: eclipsePulse 1s infinite alternate;
+        }
+        #eclipse-indicator.active {
+            display: block;
+        }
+        @keyframes eclipsePulse {
+            from { opacity: 0.4; }
+            to { opacity: 1; }
+        }
+        #moon-indicator {
+            position: fixed;
+            top: 215px;
+            right: 20px;
+            color: rgba(100,50,150,0.4);
+            font-size: 11px;
+            letter-spacing: 2px;
+            z-index: 10;
+            pointer-events: none;
+            text-align: right;
+        }
     </style>
 </head>
 <body>
@@ -364,11 +394,13 @@
     <div id="comet-warning">⚠ COMET STORM INCOMING ⚠</div>
     <div id="comet-indicator">COMET STORM ACTIVE</div>
     <div id="flare-indicator">STELLAR FLARE x<span id="flare-mult">1</span></div>
+    <div id="eclipse-indicator">⬡ VOID MOON ECLIPSE — ABSORPTION BLOCKED</div>
     <div id="gravity-field">GRAVITY FIELD ACTIVE</div>
+    <div id="moon-indicator">◉ VOID MOONS ACTIVE</div>
     <div id="wave-clear">WAVE <span id="wave-clear-num">1</span> CLEAR +<span id="wave-bonus">500</span></div>
     <div id="close-call">CLOSE CALL! x1.5</div>
     <div id="danger-zone"></div>
-    <div id="instructions">CLICK to absorb &bull; DRAG to shift gravity &bull; SPACE for supernova &bull; Q=shield S=slowmo &bull; SURVIVE</div>
+    <div id="instructions">CLICK to absorb &bull; DRAG to shift gravity &bull; SPACE for supernova &bull; Q=shield S=slowmo &bull; VOID MOONS orbit &bull; SURVIVE</div>
     <div id="gameover">
         <h2>DECAYED</h2>
         <p id="final-score">Final Score: 0</p>
@@ -951,6 +983,202 @@
             }
         }
 
+        // ===== VOID MOON ECLIPSE SYSTEM =====
+        class VoidMoon {
+            constructor(orbitRadius, orbitSpeed, size, index) {
+                this.orbitRadius = orbitRadius;
+                this.orbitSpeed = orbitSpeed;
+                this.size = size;
+                this.index = index;
+                this.angle = Math.random() * Math.PI * 2;
+                this.pulse = Math.random() * Math.PI * 2;
+                this.eclipseActive = false;
+                this.shadowConeLength = 600;
+                this.damageFlash = 0;
+            }
+            update(ts = 1) {
+                this.angle += this.orbitSpeed * ts;
+                this.pulse += 0.05 * ts;
+                this.damageFlash = Math.max(0, this.damageFlash - 0.05 * ts);
+                // Clear eclipse flags on all debris first
+                debris.forEach(d => { if (d.alive) d.eclipsed = false; });
+                // Check eclipse: is moon between star and debris?
+                debris.forEach(d => {
+                    if (!d.alive) return;
+                    const dx = d.x - centerX;
+                    const dy = d.y - centerY;
+                    const debrisAngle = Math.atan2(dy, dx);
+                    const angleDiff = Math.abs(this.normalizeAngle(debrisAngle - this.angle));
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    if (angleDiff < 0.35 && dist > this.orbitRadius * 0.4) {
+                        this.eclipseActive = true;
+                        d.eclipsed = true;
+                    }
+                });
+                if (!this.eclipseActive) {
+                    // Check if any debris is still eclipsed by this moon
+                    debris.forEach(d => {
+                        if (!d.alive || !d.eclipsed) return;
+                        const dx = d.x - centerX;
+                        const dy = d.y - centerY;
+                        const debrisAngle = Math.atan2(dy, dx);
+                        const angleDiff = Math.abs(this.normalizeAngle(debrisAngle - this.angle));
+                        const dist = Math.sqrt(dx * dx + dy * dy);
+                        if (angleDiff >= 0.35 || dist <= this.orbitRadius * 0.4) {
+                            d.eclipsed = false;
+                        }
+                    });
+                }
+                // Gravity: moons pull nearby debris tangentially (slingshot)
+                debris.forEach(d => {
+                    if (!d.alive) return;
+                    const dx = this.getX() - d.x;
+                    const dy = this.getY() - d.y;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    if (dist < 200 && dist > 1) {
+                        const tangentX = -dy / dist;
+                        const tangentY = dx / dist;
+                        const force = (30 / (dist * 0.1)) * ts;
+                        d.vx += tangentX * force;
+                        d.vy += tangentY * force;
+                    }
+                    // Damage if debris hits moon
+                    if (dist < this.size + d.size) {
+                        for (let i = 0; i < 10; i++) {
+                            particles.push(new Particle(d.x, d.y, '#aa66ff'));
+                        }
+                        this.damageFlash = 1;
+                        d.alive = false;
+                        setTimeout(() => d.reset(), 800);
+                    }
+                });
+                // Moons absorb comets on contact
+                comets.forEach(c => {
+                    if (!c.alive) return;
+                    const dx = this.getX() - c.x;
+                    const dy = this.getY() - c.y;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    if (dist < this.size + c.radius + 10) {
+                        for (let i = 0; i < 15; i++) {
+                            particles.push(new Particle(c.x, c.y, '#aa66ff', true));
+                        }
+                        playBlackHole();
+                        c.alive = false;
+                        setTimeout(() => c.reset(), 1500);
+                    }
+                });
+            }
+            getX() {
+                return centerX + Math.cos(this.angle) * this.orbitRadius;
+            }
+            getY() {
+                return centerY + Math.sin(this.angle) * this.orbitRadius;
+            }
+            normalizeAngle(a) {
+                while (a > Math.PI) a -= Math.PI * 2;
+                while (a < -Math.PI) a += Math.PI * 2;
+                return a;
+            }
+            draw() {
+                const mx = this.getX();
+                const my = this.getY();
+                const breathe = Math.sin(this.pulse) * 2;
+                const r = this.size + breathe;
+                // Draw shadow cone (eclipse zone)
+                if (this.eclipseActive) {
+                    ctx.save();
+                    const coneAngle = 0.4;
+                    const spread = this.orbitRadius + this.shadowConeLength;
+                    ctx.beginPath();
+                    ctx.moveTo(centerX, centerY);
+                    ctx.lineTo(
+                        centerX + Math.cos(this.angle - coneAngle) * spread,
+                        centerY + Math.sin(this.angle - coneAngle) * spread
+                    );
+                    ctx.arc(centerX, centerY, spread, this.angle - coneAngle, this.angle + coneAngle);
+                    ctx.lineTo(centerX, centerY);
+                    ctx.closePath();
+                    const shadowGrad = ctx.createRadialGradient(centerX, centerY, this.orbitRadius * 0.5, centerX, centerY, spread);
+                    shadowGrad.addColorStop(0, 'rgba(0,0,0,0.5)');
+                    shadowGrad.addColorStop(0.5, 'rgba(0,0,0,0.2)');
+                    shadowGrad.addColorStop(1, 'transparent');
+                    ctx.fillStyle = shadowGrad;
+                    ctx.fill();
+                    ctx.restore();
+                }
+                // Orbital ring
+                ctx.save();
+                ctx.strokeStyle = this.eclipseActive ? 'rgba(170,100,255,0.3)' : 'rgba(100,50,150,0.15)';
+                ctx.lineWidth = 1;
+                ctx.setLineDash([4, 8]);
+                ctx.beginPath();
+                ctx.arc(centerX, centerY, this.orbitRadius, 0, Math.PI * 2);
+                ctx.stroke();
+                ctx.setLineDash([]);
+                ctx.restore();
+                // Moon glow
+                ctx.save();
+                ctx.shadowColor = '#aa66ff';
+                ctx.shadowBlur = 25;
+                const moonGrad = ctx.createRadialGradient(mx, my, 0, mx, my, r * 2);
+                moonGrad.addColorStop(0, '#1a0033');
+                moonGrad.addColorStop(0.6, '#330066');
+                moonGrad.addColorStop(1, 'transparent');
+                ctx.fillStyle = moonGrad;
+                ctx.beginPath();
+                ctx.arc(mx, my, r * 2, 0, Math.PI * 2);
+                ctx.fill();
+                // Moon core
+                const coreGrad = ctx.createRadialGradient(mx - r * 0.3, my - r * 0.3, 0, mx, my, r);
+                coreGrad.addColorStop(0, '#442266');
+                coreGrad.addColorStop(0.5, '#220044');
+                coreGrad.addColorStop(1, '#000000');
+                ctx.fillStyle = coreGrad;
+                ctx.beginPath();
+                ctx.arc(mx, my, r, 0, Math.PI * 2);
+                ctx.fill();
+                // Crater details
+                ctx.strokeStyle = 'rgba(100,50,150,0.4)';
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.arc(mx + r * 0.2, my + r * 0.1, r * 0.3, 0, Math.PI * 2);
+                ctx.stroke();
+                ctx.beginPath();
+                ctx.arc(mx - r * 0.3, my - r * 0.2, r * 0.15, 0, Math.PI * 2);
+                ctx.stroke();
+                // Eclipse ring when active
+                if (this.eclipseActive) {
+                    ctx.strokeStyle = `rgba(170,100,255,${0.5 + Math.sin(this.pulse * 2) * 0.3})`;
+                    ctx.lineWidth = 2;
+                    ctx.setLineDash([3, 3]);
+                    ctx.beginPath();
+                    ctx.arc(mx, my, r + 8, 0, Math.PI * 2);
+                    ctx.stroke();
+                    ctx.setLineDash([]);
+                }
+                // Damage flash
+                if (this.damageFlash > 0) {
+                    ctx.globalAlpha = this.damageFlash;
+                    ctx.fillStyle = '#ff3366';
+                    ctx.beginPath();
+                    ctx.arc(mx, my, r + 10, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.globalAlpha = 1;
+                }
+                ctx.restore();
+            }
+        }
+
+        // Create void moons (two orbiting void moons)
+        let voidMoons = [];
+        function initVoidMoons() {
+            voidMoons = [
+                new VoidMoon(120, 0.008, 18, 0),
+                new VoidMoon(200, -0.005, 14, 1)
+            ];
+        }
+        initVoidMoons();
+
         class Debris {
             constructor() {
                 this.reset();
@@ -967,6 +1195,8 @@
                 this.color = this.type === 'comet' ? '#00ff88' : (Math.random() < 0.5 ? '#D4A853' : '#888');
                 this.trail = [];
                 this.alive = true;
+                this.eclipsed = false;
+                this.justMissed = false;
                 this.value = Math.floor(this.size * 10);
                 this.orbitAngle = Math.random() * Math.PI * 2;
                 this.orbitSpeed = (Math.random() * 0.02 + 0.005) * (Math.random() < 0.5 ? 1 : -1);
@@ -1012,6 +1242,27 @@
                 }
             }
             absorb() {
+                // Eclipse blocks absorption — debris bounces off
+                if (this.eclipsed) {
+                    // Bounce debris away
+                    const dx = this.x - centerX;
+                    const dy = this.y - centerY;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    if (dist > 1) {
+                        this.vx = (dx / dist) * 5;
+                        this.vy = (dy / dist) * 5;
+                    }
+                    // Visual: purple deflection sparks
+                    for (let i = 0; i < 8; i++) {
+                        particles.push(new Particle(this.x, this.y, '#aa66ff'));
+                    }
+                    playTone(200, 0.1, 'sine', 0.05);
+                    // Mass drain during eclipse
+                    mass = Math.max(10, mass - 0.3);
+                    this.alive = false;
+                    setTimeout(() => this.reset(), 500);
+                    return;
+                }
                 if (mass + this.mass > maxMass) {
                     this.explode();
                     return;
@@ -1502,6 +1753,10 @@
             } else {
                 document.getElementById('slowmo-timer').textContent = '';
             }
+            // Eclipse indicator — show when any void moon is eclipsing
+            const eclipseEl = document.getElementById('eclipse-indicator');
+            const anyEclipse = voidMoons.some(vm => vm.eclipseActive);
+            eclipseEl.classList.toggle('active', anyEclipse);
         }
 
         let announcementTimeout = null;
@@ -1552,6 +1807,7 @@
             particles.length = 0;
             shockwaves.length = 0;
             stellarFlares.length = 0;
+            initVoidMoons();
             document.getElementById('gameover').style.display = 'none';
             document.getElementById('comet-indicator').style.display = 'none';
         };
@@ -1639,6 +1895,10 @@
             if (gameRunning && mass > 30) {
                 mass -= 0.1;
             }
+            // Eclipse mass drain — void moons slowly drain mass when eclipsing
+            if (gameRunning && voidMoons.some(vm => vm.eclipseActive)) {
+                mass = Math.max(10, mass - 0.15);
+            }
         }, 100);
 
         setInterval(() => {
@@ -1686,6 +1946,32 @@
             }
             blackHoles = blackHoles.filter(bh => bh.alive);
             blackHoles.forEach(bh => bh.update(slowmoActive ? 0.3 : 1));
+            // Update void moons
+            voidMoons.forEach(vm => vm.update(slowmoActive ? 0.3 : 1));
+            // Star collides with void moons — take damage and get pushed away
+            if (gameRunning) {
+                voidMoons.forEach(vm => {
+                    const dx = vm.getX() - centerX;
+                    const dy = vm.getY() - centerY;
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    if (dist < star.radius + vm.size) {
+                        // Push star away from moon
+                        if (dist > 1) {
+                            centerX -= (dx / dist) * 8;
+                            centerY -= (dy / dist) * 8;
+                        }
+                        // Damage
+                        if (!isShielded()) {
+                            mass = Math.max(10, mass - 1);
+                            if (mass <= 10) {
+                                endGame();
+                            }
+                        }
+                        flashAlpha = 0.15;
+                        playTone(150, 0.2, 'sawtooth', 0.15);
+                    }
+                });
+            }
             // Update and filter comets
             comets = comets.filter(c => c.alive);
             comets.forEach(c => c.update(slowmoActive ? 0.3 : 1));
@@ -1701,6 +1987,7 @@
             debris.forEach(d => d.draw());
             comets.forEach(c => c.draw());
             blackHoles.forEach(bh => bh.draw());
+            voidMoons.forEach(vm => vm.draw());
             powerups.forEach(p => p.draw());
             particles.forEach(p => p.draw());
             stellarFlares.forEach(f => f.draw());
