@@ -1002,7 +1002,7 @@
                 this.damageFlash = Math.max(0, this.damageFlash - 0.05 * ts);
                 // Clear eclipse flags on all debris first
                 debris.forEach(d => { if (d.alive) d.eclipsed = false; });
-                // Check eclipse: is moon between star and debris?
+                // Check eclipse: is moon between star and debris? Only eclipse debris close to the star
                 debris.forEach(d => {
                     if (!d.alive) return;
                     const dx = d.x - centerX;
@@ -1010,7 +1010,8 @@
                     const debrisAngle = Math.atan2(dy, dx);
                     const angleDiff = Math.abs(this.normalizeAngle(debrisAngle - this.angle));
                     const dist = Math.sqrt(dx * dx + dy * dy);
-                    if (angleDiff < 0.35 && dist > this.orbitRadius * 0.4) {
+                    // Only block if debris is within 300px of star (close to absorption range)
+                    if (angleDiff < 0.25 && dist < 300 && dist > this.orbitRadius * 0.5) {
                         this.eclipseActive = true;
                         d.eclipsed = true;
                     }
@@ -1024,7 +1025,7 @@
                         const debrisAngle = Math.atan2(dy, dx);
                         const angleDiff = Math.abs(this.normalizeAngle(debrisAngle - this.angle));
                         const dist = Math.sqrt(dx * dx + dy * dy);
-                        if (angleDiff >= 0.35 || dist <= this.orbitRadius * 0.4) {
+                        if (angleDiff >= 0.25 || dist >= 300 || dist <= this.orbitRadius * 0.5) {
                             d.eclipsed = false;
                         }
                     });
@@ -1035,10 +1036,10 @@
                     const dx = this.getX() - d.x;
                     const dy = this.getY() - d.y;
                     const dist = Math.sqrt(dx * dx + dy * dy);
-                    if (dist < 200 && dist > 1) {
+                    if (dist < 180 && dist > 1) {
                         const tangentX = -dy / dist;
                         const tangentY = dx / dist;
-                        const force = (30 / (dist * 0.1)) * ts;
+                        const force = (15 / (dist * 0.1)) * ts;
                         d.vx += tangentX * force;
                         d.vy += tangentY * force;
                     }
@@ -1895,9 +1896,9 @@
             if (gameRunning && mass > 30) {
                 mass -= 0.1;
             }
-            // Eclipse mass drain — void moons slowly drain mass when eclipsing
+            // Eclipse mass drain — void moons slowly drain mass when actively eclipsing debris
             if (gameRunning && voidMoons.some(vm => vm.eclipseActive)) {
-                mass = Math.max(10, mass - 0.15);
+                mass = Math.max(10, mass - 0.03);
             }
         }, 100);
 
